@@ -2,10 +2,7 @@ package net.droingo.outbackkayak.entity;
 
 import net.droingo.outbackkayak.network.PaddleStrokePayload;
 import net.droingo.outbackkayak.registry.ModItems;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.MovementType;
+import net.minecraft.entity.*;
 import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.entity.data.DataTracker;
 import net.minecraft.entity.player.PlayerEntity;
@@ -26,12 +23,25 @@ import software.bernie.geckolib.animation.AnimationController;
 import software.bernie.geckolib.animation.PlayState;
 import software.bernie.geckolib.animation.RawAnimation;
 import software.bernie.geckolib.util.GeckoLibUtil;
+import net.minecraft.item.Items;
+import org.jetbrains.annotations.Nullable;
 
-public class KayakEntity extends Entity implements GeoEntity {
+import net.minecraft.fluid.FluidState;
+import net.minecraft.registry.tag.FluidTags;
+import net.minecraft.util.math.BlockPos;
+
+public class KayakEntity extends Entity implements GeoEntity, Leashable {
     private static final RawAnimation IDLE_ANIMATION = RawAnimation.begin().thenLoop("rock");
     private static final RawAnimation ENTER_ANIMATION = RawAnimation.begin().thenPlay("enter");
 
     private static final int STROKE_COOLDOWN_TICKS = 2;
+
+    private static final double WATER_SURFACE_OFFSET = 0.05;
+    private static final double FLOAT_SEARCH_UP = 1.25;
+    private static final double FLOAT_SEARCH_DOWN = 2.25;
+    private static final double FLOAT_SPRING_STRENGTH = 0.18;
+    private static final double FLOAT_VERTICAL_DAMPING = 0.55;
+    private static final double MAX_FLOAT_VERTICAL_SPEED = 0.18;
 
     private static final double FORWARD_STROKE_POWER = 0.22;
     private static final double BACKWARD_STROKE_POWER = -0.14;
@@ -52,6 +62,10 @@ public class KayakEntity extends Entity implements GeoEntity {
     private static final float MAX_YAW_VELOCITY = 7.0f;
     private static final float YAW_DECAY = 0.78f;
 
+    private static final double MIN_LEASH_ALIGN_SPEED = 0.035;
+    private static final float LEASH_YAW_ALIGN_STRENGTH = 0.22f;
+    private static final float MAX_LEASH_YAW_STEP = 6.0f;
+
     private static final double MIN_RUDDER_SPEED = 0.08;
 
     private final AnimatableInstanceCache animatableInstanceCache = GeckoLibUtil.createInstanceCache(this);
@@ -66,6 +80,8 @@ public class KayakEntity extends Entity implements GeoEntity {
     private double clientTargetZ;
     private float clientTargetYaw;
     private float clientTargetPitch;
+
+
 
     public KayakEntity(EntityType<? extends KayakEntity> entityType, World world) {
         super(entityType, world);
@@ -84,7 +100,40 @@ public class KayakEntity extends Entity implements GeoEntity {
             this.tickClientInterpolation();
         } else {
             this.tickKayakMovement();
+
+            Leashable.tickLeash(this);
+            this.applyKayakLeashPull();
+            this.alignYawToLeashMovement();
         }
+    }
+
+    private void alignYawToLeashMovement() {
+        if (!this.isLeashed()) {
+            return;
+        }
+
+        if (this.hasPassengers()) {
+            return;
+        }
+
+        Vec3d horizontalMomentum = new Vec3d(this.kayakMomentum.x, 0.0, this.kayakMomentum.z);
+
+        if (horizontalMomentum.lengthSquared() < MIN_LEASH_ALIGN_SPEED * MIN_LEASH_ALIGN_SPEED) {
+            return;
+        }
+
+        float targetYaw = (float) (MathHelper.atan2(horizontalMomentum.z, horizontalMomentum.x) * MathHelper.DEGREES_PER_RADIAN) - 90.0f;
+
+        float yawDifference = MathHelper.wrapDegrees(targetYaw - this.getYaw());
+        float yawStep = MathHelper.clamp(
+                yawDifference * LEASH_YAW_ALIGN_STRENGTH,
+                -MAX_LEASH_YAW_STEP,
+                MAX_LEASH_YAW_STEP
+        );
+
+        this.prevYaw = this.getYaw();
+        this.setYaw(this.getYaw() + yawStep);
+        this.setRotation(this.getYaw(), this.getPitch());
     }
 
     private void tickClientInterpolation() {
@@ -110,6 +159,36 @@ public class KayakEntity extends Entity implements GeoEntity {
         this.clientInterpolationTicks--;
     }
 
+    private void applyKayakLeashPull() {
+        Entity leashHolder = this.getLeashHolder();
+
+        if (leashHolder == null) {
+            return;
+        }
+
+        Vec3d toHolder = leashHolder.getPos().subtract(this.getPos());
+        double distance = toHolder.length();
+
+        if (distance < 1.8) {
+            return;
+        }
+
+        Vec3d pullDirection = toHolder.normalize();
+
+        double pullStrength = Math.min((distance - 1.8) * 0.035, 0.12);
+
+        if (!this.isNearWaterForKayakControl()) {
+            pullStrength *= 0.45;
+        }
+
+        this.kayakMomentum = this.limitHorizontalMomentum(
+                this.kayakMomentum.add(pullDirection.multiply(pullStrength))
+        );
+
+        this.setVelocity(this.kayakMomentum.x, this.getVelocity().y, this.kayakMomentum.z);
+        this.velocityModified = true;
+    }
+
     private void tickKayakMovement() {
         if (this.strokeCooldownTicks > 0) {
             this.strokeCooldownTicks--;
@@ -117,7 +196,8 @@ public class KayakEntity extends Entity implements GeoEntity {
 
         this.applySmoothKayakTurning();
 
-        double decay = this.isTouchingWater() ? WATER_MOMENTUM_DECAY : LAND_MOMENTUM_DECAY;
+        boolean nearWater = this.isNearWaterForKayakControl();
+        double decay = nearWater ? WATER_MOMENTUM_DECAY : LAND_MOMENTUM_DECAY;
 
         this.kayakMomentum = this.kayakMomentum.multiply(decay);
         this.kayakMomentum = this.applyKayakTracking(this.kayakMomentum);
@@ -127,13 +207,7 @@ public class KayakEntity extends Entity implements GeoEntity {
             this.kayakMomentum = Vec3d.ZERO;
         }
 
-        double yVelocity = this.getVelocity().y;
-
-        if (this.isTouchingWater()) {
-            yVelocity = 0.0;
-        } else {
-            yVelocity -= 0.08;
-        }
+        double yVelocity = this.calculateFloatingVelocity();
 
         this.setVelocity(this.kayakMomentum.x, yVelocity, this.kayakMomentum.z);
         this.move(MovementType.SELF, this.getVelocity());
@@ -149,7 +223,7 @@ public class KayakEntity extends Entity implements GeoEntity {
             return;
         }
 
-        if (!this.isTouchingWater()) {
+        if (!this.isNearWaterForKayakControl()) {
             return;
         }
 
@@ -193,6 +267,45 @@ public class KayakEntity extends Entity implements GeoEntity {
         this.velocityModified = true;
 
         this.spawnStrokeSplash(side, direction);
+    }
+
+    private double calculateFloatingVelocity() {
+        Double waterSurfaceY = this.findNearbyWaterSurfaceY();
+
+        if (waterSurfaceY == null) {
+            return this.getVelocity().y - 0.08;
+        }
+
+        double targetY = waterSurfaceY + WATER_SURFACE_OFFSET;
+        double heightDifference = targetY - this.getY();
+
+        double verticalVelocity = this.getVelocity().y;
+        verticalVelocity += heightDifference * FLOAT_SPRING_STRENGTH;
+        verticalVelocity *= FLOAT_VERTICAL_DAMPING;
+
+        return MathHelper.clamp(
+                verticalVelocity,
+                -MAX_FLOAT_VERTICAL_SPEED,
+                MAX_FLOAT_VERTICAL_SPEED
+        );
+    }
+
+    private Double findNearbyWaterSurfaceY() {
+        BlockPos basePos = this.getBlockPos();
+
+        int up = (int) Math.ceil(FLOAT_SEARCH_UP);
+        int down = (int) Math.ceil(FLOAT_SEARCH_DOWN);
+
+        for (int yOffset = up; yOffset >= -down; yOffset--) {
+            BlockPos pos = basePos.up(yOffset);
+            FluidState fluidState = this.getWorld().getFluidState(pos);
+
+            if (fluidState.isIn(FluidTags.WATER)) {
+                return pos.getY() + (double) fluidState.getHeight(this.getWorld(), pos);
+            }
+        }
+
+        return null;
     }
 
     private void applyRudderStroke(int side) {
@@ -273,7 +386,7 @@ public class KayakEntity extends Entity implements GeoEntity {
         double forwardAmount = horizontal.dotProduct(forward);
         double sidewaysAmount = horizontal.dotProduct(right);
 
-        double sidewaysDecay = this.isTouchingWater()
+        double sidewaysDecay = this.isNearWaterForKayakControl()
                 ? WATER_SIDEWAYS_DRIFT_DECAY
                 : LAND_SIDEWAYS_DRIFT_DECAY;
 
@@ -283,6 +396,10 @@ public class KayakEntity extends Entity implements GeoEntity {
                 .add(right.multiply(sidewaysAmount));
 
         return new Vec3d(correctedHorizontal.x, momentum.y, correctedHorizontal.z);
+    }
+
+    private boolean isNearWaterForKayakControl() {
+        return this.findNearbyWaterSurfaceY() != null;
     }
 
     private Vec3d rotateHorizontalMomentum(Vec3d momentum, float degrees) {
@@ -381,25 +498,127 @@ public class KayakEntity extends Entity implements GeoEntity {
 
     @Override
     public ActionResult interact(PlayerEntity player, Hand hand) {
+        ItemStack stack = player.getStackInHand(hand);
+
+        if (stack.isOf(Items.LEAD)) {
+            return this.interactWithLead(player, stack);
+        }
+
+        if (player.isSneaking()) {
+            return this.tryPickUpKayak(player);
+        }
+
         if (player.shouldCancelInteraction()) {
             return ActionResult.PASS;
         }
 
         if (!this.getWorld().isClient()) {
             player.startRiding(this);
-
-            /*
-             * This requires the controller to register "enter" as a triggerable animation.
-             */
             this.triggerAnim("kayak_controller", "enter");
         }
 
         return ActionResult.SUCCESS;
     }
 
+    private ActionResult tryPickUpKayak(PlayerEntity player) {
+        if (this.getWorld().isClient()) {
+            return ActionResult.SUCCESS;
+        }
+
+        if (this.hasPassengers()) {
+            return ActionResult.FAIL;
+        }
+
+        if (this.isLeashed()) {
+            return ActionResult.FAIL;
+        }
+
+        ItemStack headStack = player.getEquippedStack(EquipmentSlot.HEAD);
+
+        if (!headStack.isEmpty()) {
+            return ActionResult.FAIL;
+        }
+
+        player.equipStack(EquipmentSlot.HEAD, new ItemStack(ModItems.KAYAK));
+        this.discard();
+
+        return ActionResult.SUCCESS;
+    }
+
+    private ActionResult interactWithLead(PlayerEntity player, ItemStack stack) {
+        if (this.getWorld().isClient()) {
+            return ActionResult.SUCCESS;
+        }
+
+        this.setLeashAnchorFromPlayer(player);
+
+        boolean wasAlreadyLeashed = this.isLeashed();
+
+        this.attachLeash(player, true);
+
+        if (!wasAlreadyLeashed && !player.getAbilities().creativeMode) {
+            stack.decrement(1);
+        }
+
+        return ActionResult.SUCCESS;
+    }
+
+    private void setLeashAnchorFromPlayer(PlayerEntity player) {
+        Vec3d toPlayer = player.getPos().subtract(this.getPos());
+        Vec3d forward = this.getFlatForwardVector();
+
+        double frontBackDot = toPlayer.dotProduct(forward);
+
+        this.leashAnchor = frontBackDot >= 0.0
+                ? LEASH_ANCHOR_FRONT
+                : LEASH_ANCHOR_BACK;
+    }
+
     @Override
     protected boolean canAddPassenger(Entity passenger) {
         return this.getPassengerList().isEmpty();
+    }
+
+    @Override
+    @Nullable
+    public Leashable.LeashData getLeashData() {
+        return this.leashData;
+    }
+
+    @Override
+    public void setLeashData(@Nullable Leashable.LeashData leashData) {
+        this.leashData = leashData;
+    }
+
+    @Override
+    public boolean canBeLeashed() {
+        return !this.isRemoved();
+    }
+
+    @Override
+    public boolean canLeashAttachTo() {
+        return !this.isRemoved();
+    }
+
+
+
+    @Override
+    protected Vec3d getLeashOffset() {
+        /*
+         * These match the Blockbench locators:
+         *
+         * front_handle: [0, 7.75, -23.25]
+         * rear_handle:  [0, 7.75,  24.25]
+         *
+         * Divided by 16 to convert model pixels to Minecraft blocks.
+         */
+        double y = 7.75 / 16.0;
+
+        double z = this.leashAnchor == LEASH_ANCHOR_BACK
+                ? -23.25 / 16.0
+                : 24.25 / 16.0;
+
+        return new Vec3d(0.0, y, z);
     }
 
     @Override
@@ -452,13 +671,28 @@ public class KayakEntity extends Entity implements GeoEntity {
 
     @Override
     protected void readCustomDataFromNbt(NbtCompound nbt) {
-        // Later: kayak damage, storage, variant.
+        this.leashData = this.readLeashDataFromNbt(nbt);
+
+        if (nbt.contains("KayakLeashAnchor")) {
+            this.leashAnchor = nbt.getInt("KayakLeashAnchor");
+        }
     }
 
     @Override
     protected void writeCustomDataToNbt(NbtCompound nbt) {
-        // Later: kayak damage, storage, variant.
+        this.writeLeashDataToNbt(nbt, this.leashData);
+        nbt.putInt("KayakLeashAnchor", this.leashAnchor);
     }
+
+    @Nullable
+    private Leashable.LeashData leashData;
+
+    private static final int LEASH_ANCHOR_FRONT = 0;
+    private static final int LEASH_ANCHOR_BACK = 1;
+
+    private int leashAnchor = LEASH_ANCHOR_FRONT;
+
+
 
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {

@@ -2,6 +2,7 @@ package net.droingo.outbackkayak.client;
 
 import net.droingo.outbackkayak.entity.KayakEntity;
 import net.droingo.outbackkayak.network.PaddleStrokePayload;
+import net.droingo.outbackkayak.network.PlaceCarriedKayakPayload;
 import net.droingo.outbackkayak.registry.ModItems;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
@@ -9,6 +10,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
 
@@ -16,7 +18,9 @@ public final class ModKeybinds {
     private static final int RUDDER_REPEAT_TICKS = 2;
 
     private static KeyBinding paddleStrokeKey;
+
     private static boolean wasPaddleInputDown;
+    private static boolean wasUseInputDown;
     private static int rudderRepeatCooldown;
 
     private ModKeybinds() {
@@ -34,6 +38,25 @@ public final class ModKeybinds {
     }
 
     private static void handleClientTick(MinecraftClient client) {
+        /*
+         * Portage placement:
+         * We read the vanilla use key directly because right-clicking water
+         * with an empty hand does not reliably fire normal item/block callbacks.
+         */
+        boolean useInputDown = client.options.useKey.isPressed();
+
+        if (useInputDown && !wasUseInputDown) {
+            if (sendPlaceCarriedKayakIfValid(client)) {
+                wasUseInputDown = true;
+                return;
+            }
+        }
+
+        wasUseInputDown = useInputDown;
+
+        /*
+         * Kayak paddle controls.
+         */
         boolean paddleInputDown = isPaddleInputDown(client);
 
         if (rudderRepeatCooldown > 0) {
@@ -75,6 +98,27 @@ public final class ModKeybinds {
         }
 
         wasPaddleInputDown = paddleInputDown;
+    }
+
+    private static boolean sendPlaceCarriedKayakIfValid(MinecraftClient client) {
+        if (client.player == null) {
+            return false;
+        }
+
+        if (!client.player.isSneaking()) {
+            return false;
+        }
+
+        if (!client.player.getEquippedStack(EquipmentSlot.HEAD).isOf(ModItems.KAYAK)) {
+            return false;
+        }
+
+        if (ClientPlayNetworking.canSend(PlaceCarriedKayakPayload.ID)) {
+            ClientPlayNetworking.send(new PlaceCarriedKayakPayload());
+            return true;
+        }
+
+        return false;
     }
 
     private static boolean isPaddleInputDown(MinecraftClient client) {

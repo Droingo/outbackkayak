@@ -1,5 +1,6 @@
 package net.droingo.outbackkayak;
 
+import net.droingo.outbackkayak.event.ModInteractionEvents;
 import net.droingo.outbackkayak.network.ModNetworking;
 import net.droingo.outbackkayak.registry.ModEntities;
 import net.droingo.outbackkayak.registry.ModItems;
@@ -16,6 +17,7 @@ public class OutbackKayak implements ModInitializer {
         ModEntities.register();
         ModItems.register();
         ModNetworking.register();
+        ModInteractionEvents.register();
 
         LOGGER.info("Outback Kayak loaded.");
     }
