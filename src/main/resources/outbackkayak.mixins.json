@@ -1,14 +1,18 @@
 {
-	"required": true,
-	"package": "net.droingo.outbackkayak.mixin",
-	"compatibilityLevel": "JAVA_21",
-	"mixins": [
-		"ExampleMixin"
-	],
-	"injectors": {
-		"defaultRequire": 1
-	},
-	"overwrites": {
-		"requireAnnotations": true
-	}
+  "required": true,
+  "package": "net.droingo.outbackkayak.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "ExampleMixin"
+  ],
+  "client": [
+    "client.BipedEntityModelKayakMixin",
+    "client.PlayerEntityModelKayakMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  }
 }
