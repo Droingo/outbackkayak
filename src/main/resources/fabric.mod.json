@@ -1,0 +1,37 @@
+{
+	"schemaVersion": 1,
+	"id": "outbackkayak",
+	"version": "${version}",
+	"name": "Outback Kayak",
+	"description": "Droingo Outback Kayak",
+	"authors": [
+		"Me!"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "MIT",
+	"icon": "assets/outbackkayak/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"net.droingo.outbackkayak.OutbackKayak"
+		],
+		"fabric-datagen": [
+			"net.droingo.outbackkayak.OutbackKayakDataGenerator"
+		],
+      "client": [
+        "net.droingo.outbackkayak.OutbackKayakClient"
+      ]
+	},
+	"mixins": [
+		"outbackkayak.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.19.2",
+		"minecraft": "~1.21.1",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}
