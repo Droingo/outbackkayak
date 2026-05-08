@@ -13,6 +13,11 @@
 			"bones": [
 				{
 					"name": "kayak_root",
+					"pivot": [0, 0, 0]
+				},
+				{
+					"name": "kayak_tilt",
+					"parent": "kayak_root",
 					"pivot": [0, 0, 0],
 					"locators": {
 						"seat": [0, 3, 0],
@@ -26,7 +31,7 @@
 				},
 				{
 					"name": "hull",
-					"parent": "kayak_root",
+					"parent": "kayak_tilt",
 					"pivot": [0, 0, 0],
 					"cubes": [
 						{"origin": [-7, 0, -6], "size": [2, 7, 12], "uv": [40, 35]},

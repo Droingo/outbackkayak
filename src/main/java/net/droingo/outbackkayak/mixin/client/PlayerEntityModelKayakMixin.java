@@ -31,12 +31,9 @@ public abstract class PlayerEntityModelKayakMixin<T extends LivingEntity> {
             float headPitch,
             CallbackInfo ci
     ) {
-        if (entity.getVehicle() instanceof KayakEntity) {
-            this.leftPants.visible = false;
-            this.rightPants.visible = false;
-        } else {
-            this.leftPants.visible = true;
-            this.rightPants.visible = true;
-        }
+        boolean ridingKayak = entity.getVehicle() instanceof KayakEntity;
+
+        this.leftPants.visible = !ridingKayak;
+        this.rightPants.visible = !ridingKayak;
     }
 }

@@ -1,5 +1,6 @@
 package net.droingo.outbackkayak;
 
+import net.droingo.outbackkayak.client.CarryLookSlowdown;
 import net.droingo.outbackkayak.client.ModKeybinds;
 import net.droingo.outbackkayak.client.render.KayakEntityRenderer;
 import net.droingo.outbackkayak.registry.ModEntities;
@@ -11,5 +12,6 @@ public class OutbackKayakClient implements ClientModInitializer {
     public void onInitializeClient() {
         EntityRendererRegistry.register(ModEntities.KAYAK, KayakEntityRenderer::new);
         ModKeybinds.register();
+        CarryLookSlowdown.register();
     }
 }

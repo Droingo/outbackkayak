@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "outbackkayak:block/rapid_controller"
+    },
+    "facing=east": {
+      "model": "outbackkayak:block/rapid_controller",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "outbackkayak:block/rapid_controller",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "outbackkayak:block/rapid_controller",
+      "y": 270
+    }
+  }
+}

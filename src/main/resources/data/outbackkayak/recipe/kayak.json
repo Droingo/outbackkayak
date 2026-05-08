@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "transportation",
+  "pattern": [
+    "O O",
+    "PPP",
+    " P "
+  ],
+  "key": {
+    "O": {
+      "item": "minecraft:orange_wool"
+    },
+    "P": {
+      "item": "minecraft:black_wool"
+    }
+  },
+  "result": {
+    "id": "outbackkayak:kayak",
+    "count": 1
+  }
+}

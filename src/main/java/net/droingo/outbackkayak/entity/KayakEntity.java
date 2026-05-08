@@ -16,6 +16,8 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
+import net.minecraft.sound.SoundCategory;
+import net.minecraft.sound.SoundEvents;
 import software.bernie.geckolib.animatable.GeoEntity;
 import software.bernie.geckolib.animatable.instance.AnimatableInstanceCache;
 import software.bernie.geckolib.animation.AnimatableManager;
@@ -25,16 +27,49 @@ import software.bernie.geckolib.animation.RawAnimation;
 import software.bernie.geckolib.util.GeckoLibUtil;
 import net.minecraft.item.Items;
 import org.jetbrains.annotations.Nullable;
-
+import net.minecraft.entity.data.TrackedData;
+import net.minecraft.entity.data.TrackedDataHandlerRegistry;
 import net.minecraft.fluid.FluidState;
 import net.minecraft.registry.tag.FluidTags;
 import net.minecraft.util.math.BlockPos;
+import net.droingo.outbackkayak.block.RapidControllerBlock;
+import net.droingo.outbackkayak.registry.ModBlocks;
+import net.minecraft.block.BlockState;
+import net.minecraft.util.math.Direction;
 
 public class KayakEntity extends Entity implements GeoEntity, Leashable {
     private static final RawAnimation IDLE_ANIMATION = RawAnimation.begin().thenLoop("rock");
     private static final RawAnimation ENTER_ANIMATION = RawAnimation.begin().thenPlay("enter");
+    private static final TrackedData<Integer> PADDLE_ACTION_SIDE = DataTracker.registerData(
+
+
+
+
+            KayakEntity.class,
+            TrackedDataHandlerRegistry.INTEGER
+    );
+
+    private static final TrackedData<Integer> PADDLE_ACTION_DIRECTION = DataTracker.registerData(
+            KayakEntity.class,
+            TrackedDataHandlerRegistry.INTEGER
+    );
+
+    private static final TrackedData<Integer> PADDLE_ACTION_TICKS = DataTracker.registerData(
+            KayakEntity.class,
+            TrackedDataHandlerRegistry.INTEGER
+    );
+
+    private static final int PADDLE_ACTION_DURATION_TICKS = 8;
 
     private static final int STROKE_COOLDOWN_TICKS = 2;
+
+    private static final double RAPID_CONTROLLER_PUSH = 0.035;
+    private static final float RAPID_CONTROLLER_YAW_ALIGN_STRENGTH = 0.055f;
+    private static final float RAPID_CONTROLLER_MAX_YAW_STEP = 1.25f;
+
+    private static final int RAPID_CONTROLLER_HORIZONTAL_RADIUS = 3;
+    private static final int RAPID_CONTROLLER_SEARCH_DOWN = 3;
+    private static final int RAPID_CONTROLLER_SEARCH_UP = 1;
 
     private static final double WATER_SURFACE_OFFSET = 0.05;
     private static final double FLOAT_SEARCH_UP = 1.25;
@@ -89,6 +124,10 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
 
     @Override
     protected void initDataTracker(DataTracker.Builder builder) {
+        builder.add(PADDLE_ACTION_SIDE, 0);
+        builder.add(PADDLE_ACTION_DIRECTION, 0);
+        builder.add(PADDLE_ACTION_TICKS, 0);
+
         // Later: synced wobble, rapid intensity, stability, capsize state.
     }
 
@@ -194,6 +233,8 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
             this.strokeCooldownTicks--;
         }
 
+        this.tickPaddleActionState();
+
         this.applySmoothKayakTurning();
 
         boolean nearWater = this.isNearWaterForKayakControl();
@@ -201,6 +242,9 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
 
         this.kayakMomentum = this.kayakMomentum.multiply(decay);
         this.kayakMomentum = this.applyKayakTracking(this.kayakMomentum);
+
+        this.applyRapidControllerForces();
+
         this.kayakMomentum = this.limitHorizontalMomentum(this.kayakMomentum);
 
         if (this.kayakMomentum.horizontalLengthSquared() < 0.00008) {
@@ -242,8 +286,13 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
         this.strokeCooldownTicks = STROKE_COOLDOWN_TICKS;
 
         if (direction == PaddleStrokePayload.DIRECTION_RUDDER) {
-            this.applyRudderStroke(side);
+            if (!this.applyRudderStroke(side)) {
+                return;
+            }
+
+            this.setPaddleActionState(side, direction);
             this.spawnStrokeSplash(side, direction);
+            this.playStrokeSound(side, direction);
             return;
         }
 
@@ -266,7 +315,140 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
         this.setVelocity(this.kayakMomentum.x, this.getVelocity().y, this.kayakMomentum.z);
         this.velocityModified = true;
 
+        this.setPaddleActionState(side, direction);
         this.spawnStrokeSplash(side, direction);
+        this.playStrokeSound(side, direction);
+    }
+
+    private void applyRapidControllerForces() {
+        if (!this.isNearWaterForKayakControl()) {
+            return;
+        }
+
+        BlockPos kayakPos = this.getBlockPos();
+
+        Vec3d weightedFlow = Vec3d.ZERO;
+        double totalWeight = 0.0;
+
+        for (int yOffset = RAPID_CONTROLLER_SEARCH_UP; yOffset >= -RAPID_CONTROLLER_SEARCH_DOWN; yOffset--) {
+            for (int xOffset = -RAPID_CONTROLLER_HORIZONTAL_RADIUS; xOffset <= RAPID_CONTROLLER_HORIZONTAL_RADIUS; xOffset++) {
+                for (int zOffset = -RAPID_CONTROLLER_HORIZONTAL_RADIUS; zOffset <= RAPID_CONTROLLER_HORIZONTAL_RADIUS; zOffset++) {
+                    BlockPos checkPos = kayakPos.add(xOffset, yOffset, zOffset);
+                    BlockState state = this.getWorld().getBlockState(checkPos);
+
+                    if (!state.isOf(ModBlocks.RAPID_CONTROLLER)) {
+                        continue;
+                    }
+
+                    Direction flowDirection = RapidControllerBlock.getFlowDirection(state);
+
+                    Vec3d flow = new Vec3d(
+                            flowDirection.getOffsetX(),
+                            0.0,
+                            flowDirection.getOffsetZ()
+                    );
+
+                    if (flow.lengthSquared() <= 0.0) {
+                        continue;
+                    }
+
+                    double horizontalDistance = Math.sqrt((xOffset * xOffset) + (zOffset * zOffset));
+                    double distanceWeight = 1.0 - (horizontalDistance / (RAPID_CONTROLLER_HORIZONTAL_RADIUS + 1.0));
+
+                    if (distanceWeight <= 0.0) {
+                        continue;
+                    }
+
+                    weightedFlow = weightedFlow.add(flow.normalize().multiply(distanceWeight));
+                    totalWeight += distanceWeight;
+                }
+            }
+        }
+
+        if (totalWeight <= 0.0) {
+            return;
+        }
+
+        Vec3d averageFlow = weightedFlow.multiply(1.0 / totalWeight);
+
+        if (averageFlow.horizontalLengthSquared() <= 0.0001) {
+            return;
+        }
+
+        averageFlow = averageFlow.normalize();
+
+        this.kayakMomentum = this.kayakMomentum.add(
+                averageFlow.multiply(RAPID_CONTROLLER_PUSH)
+        );
+
+        this.alignYawToRapidFlow(averageFlow);
+
+        this.velocityModified = true;
+    }
+
+    private void alignYawToRapidFlow(Vec3d flow) {
+        if (flow.horizontalLengthSquared() <= 0.0001) {
+            return;
+        }
+
+        float targetYaw = (float) (MathHelper.atan2(flow.z, flow.x) * MathHelper.DEGREES_PER_RADIAN) - 90.0f;
+
+        float yawDifference = MathHelper.wrapDegrees(targetYaw - this.getYaw());
+
+        float yawStep = MathHelper.clamp(
+                yawDifference * RAPID_CONTROLLER_YAW_ALIGN_STRENGTH,
+                -RAPID_CONTROLLER_MAX_YAW_STEP,
+                RAPID_CONTROLLER_MAX_YAW_STEP
+        );
+
+        this.yawVelocity += yawStep;
+        this.yawVelocity = MathHelper.clamp(this.yawVelocity, -MAX_YAW_VELOCITY, MAX_YAW_VELOCITY);
+    }
+
+    private void tickPaddleActionState() {
+        int actionTicks = this.getPaddleActionTicks();
+
+        if (actionTicks > 1) {
+            this.dataTracker.set(PADDLE_ACTION_TICKS, actionTicks - 1);
+            return;
+        }
+
+        if (actionTicks == 1) {
+            this.clearPaddleActionState();
+        }
+    }
+
+    private void setPaddleActionState(int side, int direction) {
+        this.dataTracker.set(PADDLE_ACTION_SIDE, side);
+        this.dataTracker.set(PADDLE_ACTION_DIRECTION, direction);
+        this.dataTracker.set(PADDLE_ACTION_TICKS, PADDLE_ACTION_DURATION_TICKS);
+    }
+
+    private void clearPaddleActionState() {
+        this.dataTracker.set(PADDLE_ACTION_SIDE, 0);
+        this.dataTracker.set(PADDLE_ACTION_DIRECTION, 0);
+        this.dataTracker.set(PADDLE_ACTION_TICKS, 0);
+    }
+
+    public int getPaddleActionSide() {
+        return this.dataTracker.get(PADDLE_ACTION_SIDE);
+    }
+
+    public int getPaddleActionDirection() {
+        return this.dataTracker.get(PADDLE_ACTION_DIRECTION);
+    }
+
+    public int getPaddleActionTicks() {
+        return this.dataTracker.get(PADDLE_ACTION_TICKS);
+    }
+
+    public boolean hasActivePaddleAction() {
+        return this.getPaddleActionTicks() > 0;
+    }
+
+    public boolean isPaddleActionRudder() {
+        return this.hasActivePaddleAction()
+                && this.getPaddleActionDirection() == PaddleStrokePayload.DIRECTION_RUDDER;
     }
 
     private double calculateFloatingVelocity() {
@@ -308,11 +490,11 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
         return null;
     }
 
-    private void applyRudderStroke(int side) {
+    private boolean applyRudderStroke(int side) {
         double speed = new Vec3d(this.kayakMomentum.x, 0.0, this.kayakMomentum.z).length();
 
         if (speed < MIN_RUDDER_SPEED) {
-            return;
+            return false;
         }
 
         /*
@@ -330,6 +512,8 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
 
         this.setVelocity(this.kayakMomentum.x, this.getVelocity().y, this.kayakMomentum.z);
         this.velocityModified = true;
+
+        return true;
     }
 
     private void applySmoothKayakTurning() {
@@ -447,7 +631,7 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
         Vec3d forward = this.getFlatForwardVector();
         Vec3d right = new Vec3d(forward.z, 0.0, -forward.x).normalize();
 
-        Vec3d sideOffset = right.multiply(side * 0.65);
+        Vec3d sideOffset = right.multiply(-side * 0.65);
         double length = switch (direction) {
             case PaddleStrokePayload.DIRECTION_FORWARD -> -0.25;
             case PaddleStrokePayload.DIRECTION_BACKWARD -> 0.45;
@@ -471,6 +655,44 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
                 0.04,
                 0.12,
                 0.06
+        );
+    }
+
+    private void playStrokeSound(int side, int direction) {
+        if (!(this.getWorld() instanceof ServerWorld serverWorld)) {
+            return;
+        }
+
+        float volume;
+        float pitch;
+
+        if (direction == PaddleStrokePayload.DIRECTION_RUDDER) {
+            volume = 0.45f;
+            pitch = 0.75f + this.random.nextFloat() * 0.12f;
+        } else if (direction == PaddleStrokePayload.DIRECTION_BACKWARD) {
+            volume = 0.55f;
+            pitch = 0.85f + this.random.nextFloat() * 0.15f;
+        } else {
+            volume = 0.65f;
+            pitch = 0.95f + this.random.nextFloat() * 0.15f;
+        }
+
+        Vec3d forward = this.getFlatForwardVector();
+        Vec3d right = new Vec3d(forward.z, 0.0, -forward.x).normalize();
+
+        Vec3d soundPos = this.getPos()
+                .add(right.multiply(-side * 0.55))
+                .add(0.0, 0.2, 0.0);
+
+        serverWorld.playSound(
+                null,
+                soundPos.x,
+                soundPos.y,
+                soundPos.z,
+                SoundEvents.ENTITY_BOAT_PADDLE_WATER,
+                SoundCategory.NEUTRAL,
+                volume,
+                pitch
         );
     }
 

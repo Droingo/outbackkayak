@@ -3,9 +3,9 @@
 	"id": "outbackkayak",
 	"version": "${version}",
 	"name": "Outback Kayak",
-	"description": "Droingo Outback Kayak",
+	"description": "Ever wanted to cruise down a river in a kayak? Maybe? No? Fair enough, well now you can!",
 	"authors": [
-		"Me!"
+		"Droingo"
 	],
 	"contact": {
 		"homepage": "https://fabricmc.net/",

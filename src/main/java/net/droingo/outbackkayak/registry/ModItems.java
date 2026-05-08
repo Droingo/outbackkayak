@@ -6,6 +6,8 @@ import net.minecraft.item.Item;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
 import net.minecraft.util.Identifier;
+import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
+import net.minecraft.item.ItemGroups;
 
 public final class ModItems {
     public static final Item KAYAK = Registry.register(
@@ -25,5 +27,12 @@ public final class ModItems {
 
     public static void register() {
         OutbackKayak.LOGGER.info("Registering Outback Kayak items.");
-    }
-}
+
+        ItemGroupEvents.modifyEntriesEvent(ItemGroups.FUNCTIONAL).register(entries -> {
+            entries.add(KAYAK);
+        });
+
+        ItemGroupEvents.modifyEntriesEvent(ItemGroups.TOOLS).register(entries -> {
+            entries.add(PADDLE);
+        });
+    }}
