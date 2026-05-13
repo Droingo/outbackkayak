@@ -1,19 +1,39 @@
 {
-  "variants": {
-    "facing=north": {
-      "model": "outbackkayak:block/rapid_controller"
+  "multipart": [
+    {
+      "when": {
+        "facing": "north"
+      },
+      "apply": {
+        "model": "outbackkayak:block/rapid_controller"
+      }
     },
-    "facing=east": {
-      "model": "outbackkayak:block/rapid_controller",
-      "y": 90
+    {
+      "when": {
+        "facing": "east"
+      },
+      "apply": {
+        "model": "outbackkayak:block/rapid_controller",
+        "y": 90
+      }
     },
-    "facing=south": {
-      "model": "outbackkayak:block/rapid_controller",
-      "y": 180
+    {
+      "when": {
+        "facing": "south"
+      },
+      "apply": {
+        "model": "outbackkayak:block/rapid_controller",
+        "y": 180
+      }
     },
-    "facing=west": {
-      "model": "outbackkayak:block/rapid_controller",
-      "y": 270
+    {
+      "when": {
+        "facing": "west"
+      },
+      "apply": {
+        "model": "outbackkayak:block/rapid_controller",
+        "y": 270
+      }
     }
-  }
+  ]
 }

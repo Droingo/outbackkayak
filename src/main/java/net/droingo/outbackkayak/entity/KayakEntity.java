@@ -103,6 +103,13 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
 
     private static final double MIN_RUDDER_SPEED = 0.08;
 
+
+
+    private static final double RAPID_CONTROLLER_TURBULENCE_PUSH = 0.024;
+    private static final float RAPID_CONTROLLER_TURBULENCE_YAW = 0.65f;
+
+
+
     private final AnimatableInstanceCache animatableInstanceCache = GeckoLibUtil.createInstanceCache(this);
 
     private int strokeCooldownTicks;
@@ -328,7 +335,9 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
         BlockPos kayakPos = this.getBlockPos();
 
         Vec3d weightedFlow = Vec3d.ZERO;
-        double totalWeight = 0.0;
+        double totalDistanceWeight = 0.0;
+        double totalPushWeight = 0.0;
+        double totalTurbulenceWeight = 0.0;
 
         for (int yOffset = RAPID_CONTROLLER_SEARCH_UP; yOffset >= -RAPID_CONTROLLER_SEARCH_DOWN; yOffset--) {
             for (int xOffset = -RAPID_CONTROLLER_HORIZONTAL_RADIUS; xOffset <= RAPID_CONTROLLER_HORIZONTAL_RADIUS; xOffset++) {
@@ -359,31 +368,76 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
                         continue;
                     }
 
-                    weightedFlow = weightedFlow.add(flow.normalize().multiply(distanceWeight));
-                    totalWeight += distanceWeight;
+                    double pushMultiplier = RapidControllerBlock.getPushMultiplier(state);
+                    double weightedStrength = distanceWeight * pushMultiplier;
+
+                    double turbulenceMultiplier = getRapidTurbulenceMultiplier(state);
+                    double weightedTurbulence = distanceWeight * turbulenceMultiplier;
+
+                    weightedFlow = weightedFlow.add(flow.normalize().multiply(weightedStrength));
+                    totalDistanceWeight += distanceWeight;
+                    totalPushWeight += weightedStrength;
+                    totalTurbulenceWeight += weightedTurbulence;
                 }
             }
         }
 
-        if (totalWeight <= 0.0) {
+        if (totalDistanceWeight <= 0.0) {
             return;
         }
 
-        Vec3d averageFlow = weightedFlow.multiply(1.0 / totalWeight);
-
-        if (averageFlow.horizontalLengthSquared() <= 0.0001) {
+        if (weightedFlow.horizontalLengthSquared() <= 0.0001) {
             return;
         }
 
-        averageFlow = averageFlow.normalize();
+        Vec3d averageFlow = weightedFlow.normalize();
+
+        double averagePushMultiplier = MathHelper.clamp(
+                totalPushWeight / totalDistanceWeight,
+                0.45,
+                2.0
+        );
 
         this.kayakMomentum = this.kayakMomentum.add(
-                averageFlow.multiply(RAPID_CONTROLLER_PUSH)
+                averageFlow.multiply(RAPID_CONTROLLER_PUSH * averagePushMultiplier)
         );
+
+        double averageTurbulence = MathHelper.clamp(
+                totalTurbulenceWeight / totalDistanceWeight,
+                0.0,
+                1.0
+        );
+
+        if (averageTurbulence > 0.0) {
+            this.applyRapidTurbulence(averageFlow, averageTurbulence);
+        }
 
         this.alignYawToRapidFlow(averageFlow);
 
         this.velocityModified = true;
+    }
+
+    private static double getRapidTurbulenceMultiplier(BlockState state) {
+        return switch (RapidControllerBlock.getRapidLevel(state)) {
+            case 0 -> 0.0;  // Calm Current
+            case 1 -> 0.10; // Fast Current
+            case 2 -> 0.45; // Light Rapids
+            case 3 -> 0.85; // Heavy Rapids
+            default -> 0.10;
+        };
+    }
+
+    private void applyRapidTurbulence(Vec3d averageFlow, double turbulence) {
+        Vec3d right = new Vec3d(averageFlow.z, 0.0, -averageFlow.x).normalize();
+
+        double wave = Math.sin((this.age * 0.37) + (this.getId() * 1.71));
+
+        this.kayakMomentum = this.kayakMomentum.add(
+                right.multiply(wave * RAPID_CONTROLLER_TURBULENCE_PUSH * turbulence)
+        );
+
+        this.yawVelocity += (float) (wave * RAPID_CONTROLLER_TURBULENCE_YAW * turbulence);
+        this.yawVelocity = MathHelper.clamp(this.yawVelocity, -MAX_YAW_VELOCITY, MAX_YAW_VELOCITY);
     }
 
     private void alignYawToRapidFlow(Vec3d flow) {
@@ -632,30 +686,53 @@ public class KayakEntity extends Entity implements GeoEntity, Leashable {
         Vec3d right = new Vec3d(forward.z, 0.0, -forward.x).normalize();
 
         Vec3d sideOffset = right.multiply(-side * 0.65);
-        double length = switch (direction) {
-            case PaddleStrokePayload.DIRECTION_FORWARD -> -0.25;
-            case PaddleStrokePayload.DIRECTION_BACKWARD -> 0.45;
-            default -> 0.15;
-        };
-
-        Vec3d lengthOffset = forward.multiply(length);
+        Vec3d strokeOffset = forward.multiply(direction == PaddleStrokePayload.DIRECTION_BACKWARD ? -0.25 : 0.15);
 
         Vec3d splashPos = this.getPos()
                 .add(sideOffset)
-                .add(lengthOffset)
-                .add(0.0, 0.15, 0.0);
+                .add(strokeOffset)
+                .add(0.0, 0.35, 0.0);
+
+        int splashCount = direction == PaddleStrokePayload.DIRECTION_RUDDER ? 4 : 7;
+        double spread = direction == PaddleStrokePayload.DIRECTION_RUDDER ? 0.08 : 0.12;
 
         serverWorld.spawnParticles(
                 ParticleTypes.SPLASH,
                 splashPos.x,
                 splashPos.y,
                 splashPos.z,
-                10,
-                0.12,
-                0.04,
-                0.12,
-                0.06
+                splashCount,
+                spread,
+                0.05,
+                spread,
+                0.04
         );
+
+        serverWorld.spawnParticles(
+                ParticleTypes.BUBBLE,
+                splashPos.x,
+                splashPos.y - 0.18,
+                splashPos.z,
+                splashCount,
+                spread * 0.75,
+                0.04,
+                spread * 0.75,
+                0.025
+        );
+
+        if (direction != PaddleStrokePayload.DIRECTION_RUDDER) {
+            serverWorld.spawnParticles(
+                    ParticleTypes.CLOUD,
+                    splashPos.x,
+                    splashPos.y + 0.04,
+                    splashPos.z,
+                    2,
+                    0.05,
+                    0.01,
+                    0.05,
+                    0.0
+            );
+        }
     }
 
     private void playStrokeSound(int side, int direction) {

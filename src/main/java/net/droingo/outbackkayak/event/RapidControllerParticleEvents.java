@@ -86,6 +86,48 @@ public final class RapidControllerParticleEvents {
             return;
         }
 
+        int rapidLevel = RapidControllerBlock.getRapidLevel(state);
+
+        int cloudStreakCount = switch (rapidLevel) {
+            case 0 -> 1; // Calm Current
+            case 1 -> 2; // Fast Current
+            case 2 -> 3; // Light Rapids
+            case 3 -> 5; // Heavy Rapids
+            default -> 2;
+        };
+
+        float splashChance = switch (rapidLevel) {
+            case 0 -> 0.25f;
+            case 1 -> 0.55f;
+            case 2 -> 0.80f;
+            case 3 -> 1.00f;
+            default -> 0.55f;
+        };
+
+        float bubbleChance = switch (rapidLevel) {
+            case 0 -> 0.15f;
+            case 1 -> 0.40f;
+            case 2 -> 0.65f;
+            case 3 -> 0.90f;
+            default -> 0.40f;
+        };
+
+        double minVelocity = switch (rapidLevel) {
+            case 0 -> 0.045;
+            case 1 -> 0.080;
+            case 2 -> 0.115;
+            case 3 -> 0.150;
+            default -> 0.080;
+        };
+
+        double randomVelocity = switch (rapidLevel) {
+            case 0 -> 0.030;
+            case 1 -> 0.060;
+            case 2 -> 0.080;
+            case 3 -> 0.105;
+            default -> 0.060;
+        };
+
         double centerX = controllerPos.getX() + 0.5;
         double centerY = waterSurfaceY + 0.08;
         double centerZ = controllerPos.getZ() + 0.5;
@@ -93,18 +135,18 @@ public final class RapidControllerParticleEvents {
         Vec3d right = new Vec3d(flow.z, 0.0, -flow.x).normalize();
 
         /*
-         * Spawn particles slightly upstream, then give them velocity downstream.
-         * This reads like surface current instead of a debug arrow.
+         * Surface current streaks.
+         * Higher presets spawn more particles and move them faster downstream.
          */
-        for (int i = 0; i < 2; i++) {
-            double upstreamDistance = 0.35 + world.random.nextDouble() * 0.35;
-            double sideJitter = (world.random.nextDouble() - 0.5) * 0.55;
+        for (int i = 0; i < cloudStreakCount; i++) {
+            double upstreamDistance = 0.35 + world.random.nextDouble() * 0.45;
+            double sideJitter = (world.random.nextDouble() - 0.5) * 0.65;
 
             double x = centerX - flow.x * upstreamDistance + right.x * sideJitter;
-            double y = centerY + world.random.nextDouble() * 0.04;
+            double y = centerY + world.random.nextDouble() * 0.05;
             double z = centerZ - flow.z * upstreamDistance + right.z * sideJitter;
 
-            double velocity = 0.08 + world.random.nextDouble() * 0.06;
+            double velocity = minVelocity + world.random.nextDouble() * randomVelocity;
 
             world.spawnParticles(
                     ParticleTypes.CLOUD,
@@ -119,12 +161,37 @@ public final class RapidControllerParticleEvents {
             );
         }
 
-        if (world.random.nextFloat() < 0.65f) {
-            double sideJitter = (world.random.nextDouble() - 0.5) * 0.45;
+        /*
+         * Surface splash.
+         */
+        if (world.random.nextFloat() < splashChance) {
+            double sideJitter = (world.random.nextDouble() - 0.5) * 0.55;
 
             double x = centerX - flow.x * 0.45 + right.x * sideJitter;
             double y = centerY;
             double z = centerZ - flow.z * 0.45 + right.z * sideJitter;
+
+            double splashVelocity = minVelocity + 0.035;
+
+            int splashCount = switch (rapidLevel) {
+                case 0 -> 0;
+                case 1 -> 0;
+                case 2 -> 1;
+                case 3 -> 2;
+                default -> 0;
+            };
+
+            world.spawnParticles(
+                    ParticleTypes.SPLASH,
+                    x,
+                    y,
+                    z,
+                    splashCount,
+                    0.035,
+                    0.015,
+                    0.035,
+                    0.015
+            );
 
             world.spawnParticles(
                     ParticleTypes.SPLASH,
@@ -132,19 +199,24 @@ public final class RapidControllerParticleEvents {
                     y,
                     z,
                     0,
-                    flow.x * 0.12,
-                    0.015,
-                    flow.z * 0.12,
+                    flow.x * splashVelocity,
+                    0.02,
+                    flow.z * splashVelocity,
                     1.0
             );
         }
 
-        if (world.random.nextFloat() < 0.45f) {
-            double sideJitter = (world.random.nextDouble() - 0.5) * 0.55;
+        /*
+         * Underwater bubbles.
+         */
+        if (world.random.nextFloat() < bubbleChance) {
+            double sideJitter = (world.random.nextDouble() - 0.5) * 0.65;
 
             double x = centerX - flow.x * 0.2 + right.x * sideJitter;
             double y = centerY - 0.15;
             double z = centerZ - flow.z * 0.2 + right.z * sideJitter;
+
+            double bubbleVelocity = minVelocity * 0.7;
 
             world.spawnParticles(
                     ParticleTypes.BUBBLE,
@@ -152,9 +224,9 @@ public final class RapidControllerParticleEvents {
                     y,
                     z,
                     0,
-                    flow.x * 0.06,
+                    flow.x * bubbleVelocity,
                     0.02,
-                    flow.z * 0.06,
+                    flow.z * bubbleVelocity,
                     1.0
             );
         }

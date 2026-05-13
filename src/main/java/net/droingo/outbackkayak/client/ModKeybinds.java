@@ -5,19 +5,13 @@ import net.droingo.outbackkayak.network.PaddleStrokePayload;
 import net.droingo.outbackkayak.network.PlaceCarriedKayakPayload;
 import net.droingo.outbackkayak.registry.ModItems;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.util.math.MathHelper;
-import org.lwjgl.glfw.GLFW;
 
 public final class ModKeybinds {
     private static final int RUDDER_REPEAT_TICKS = 2;
-
-    private static KeyBinding paddleStrokeKey;
 
     private static boolean wasPaddleInputDown;
     private static boolean wasUseInputDown;
@@ -27,22 +21,10 @@ public final class ModKeybinds {
     }
 
     public static void register() {
-        paddleStrokeKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.outbackkayak.paddle_stroke",
-                InputUtil.Type.MOUSE,
-                GLFW.GLFW_MOUSE_BUTTON_LEFT,
-                "category.outbackkayak.kayaking"
-        ));
-
         ClientTickEvents.END_CLIENT_TICK.register(ModKeybinds::handleClientTick);
     }
 
     private static void handleClientTick(MinecraftClient client) {
-        /*
-         * Portage placement:
-         * We read the vanilla use key directly because right-clicking water
-         * with an empty hand does not reliably fire normal item/block callbacks.
-         */
         boolean useInputDown = client.options.useKey.isPressed();
 
         if (useInputDown && !wasUseInputDown) {
@@ -54,10 +36,7 @@ public final class ModKeybinds {
 
         wasUseInputDown = useInputDown;
 
-        /*
-         * Kayak paddle controls.
-         */
-        boolean paddleInputDown = isPaddleInputDown(client);
+        boolean paddleInputDown = client.options.attackKey.isPressed();
 
         if (rudderRepeatCooldown > 0) {
             rudderRepeatCooldown--;
@@ -119,14 +98,6 @@ public final class ModKeybinds {
         }
 
         return false;
-    }
-
-    private static boolean isPaddleInputDown(MinecraftClient client) {
-        if (paddleStrokeKey != null && paddleStrokeKey.isPressed()) {
-            return true;
-        }
-
-        return client.options.attackKey.isPressed();
     }
 
     private static boolean isValidKayakPaddleContext(MinecraftClient client) {
